@@ -1,0 +1,34 @@
+{
+  "n_agents": 20000,
+  "n_seeds": 12,
+  "steps": 14,
+  "coverage": {
+    "market_manipulator": {
+      "rate": 0.4987277124088645,
+      "lo": 0.4957840112030996,
+      "hi": 0.5016715018166542
+    },
+    "sybil_attacker": {
+      "rate": 1.0,
+      "lo": 0.9999659691601219,
+      "hi": 1.0
+    },
+    "money_launderer": {
+      "rate": 0.5,
+      "lo": 0.4964054504714641,
+      "hi": 0.5035945495285359
+    },
+    "cyber_red_team": {
+      "rate": 0.0,
+      "lo": 0.0,
+      "hi": 9.876634215828358e-05
+    }
+  },
+  "systemic": {
+    "peak": 4.027092212566927,
+    "crash": 0.4246702615576264,
+    "burned": 0.24163762134968822
+  },
+  "max_throughput_agent_steps_per_sec": 470173,
+  "elapsed_sec": 37.3
+}

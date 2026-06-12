@@ -1,0 +1,21 @@
+{
+  "estimated": {
+    "fric_attention": 1.1297815045900639,
+    "s1_risk_app": 2.2333394481427966,
+    "hab_lr": 0.22775187788531187,
+    "arb_intercept": -0.21172870773822072
+  },
+  "targets": {
+    "first_reduction": 0.095,
+    "control_rate": 0.45,
+    "fade_ratio": 0.55
+  },
+  "achieved_moments": {
+    "first_reduction": 0.14322966125502312,
+    "control_rate": 0.6387404898369103,
+    "fade_ratio": 0.5582846290540613
+  },
+  "loss": 0.18810003687497479,
+  "iterations": 43,
+  "converged": true
+}

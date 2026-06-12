@@ -1,0 +1,15 @@
+# Baseline experiment: 20k agents, scale-free network, adaptive adversary on.
+n_agents: 20000
+steps: 14
+seed: 0
+adaptive_adversary: true
+bandit_epsilon: 0.15
+network:
+  kind: scale_free
+  mean_degree: 8
+  homophily: 0.6
+  influencer_frac: 0.01
+population:
+  literacy_mean: 42.0
+  literacy_sd: 18.0
+  adversary_mix: 0.10

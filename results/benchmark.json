@@ -1,0 +1,22 @@
+[
+  {
+    "n_agents": 1000,
+    "sec": 0.036,
+    "agent_steps_per_sec": 393960
+  },
+  {
+    "n_agents": 10000,
+    "sec": 0.297,
+    "agent_steps_per_sec": 471550
+  },
+  {
+    "n_agents": 50000,
+    "sec": 1.65,
+    "agent_steps_per_sec": 424336
+  },
+  {
+    "n_agents": 100000,
+    "sec": 3.334,
+    "agent_steps_per_sec": 419931
+  }
+]

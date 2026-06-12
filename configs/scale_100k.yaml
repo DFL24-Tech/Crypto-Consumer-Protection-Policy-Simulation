@@ -1,0 +1,9 @@
+# Large-scale configuration: 100k agents.
+n_agents: 100000
+steps: 14
+seed: 0
+adaptive_adversary: false
+network:
+  kind: scale_free
+  mean_degree: 8
+  homophily: 0.6

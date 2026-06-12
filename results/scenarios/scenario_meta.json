@@ -1,0 +1,17 @@
+{
+  "n_agents": 15000,
+  "steps": 14,
+  "seeds": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "scenarios": 12,
+  "figures": [
+    "fig_scenario_markets",
+    "fig_battery",
+    "fig_policy_tradeoff",
+    "fig_grooming"
+  ]
+}
