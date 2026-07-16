@@ -26,6 +26,9 @@ dev = [
 [tool.setuptools]
 packages = ["dfl24sim_server"]
 
+[tool.setuptools.package-data]
+dfl24sim_server = ["reference_data.json"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 filterwarnings = [
