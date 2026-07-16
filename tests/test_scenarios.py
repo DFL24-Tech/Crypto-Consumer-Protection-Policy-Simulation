@@ -33,3 +33,21 @@ def test_battery_matrix_shape():
     bat = sc.run_battery(n_agents=2000, steps=8, seeds=(0,))
     assert len(bat) == len(sc.POLICY_REGIMES) * len(sc.ATTACK_WORLDS)
     assert {"policy", "attack", "coverage", "final_trust"}.issubset(bat.columns)
+
+
+def test_battery_figure_renders_coverage_and_trust_heatmaps():
+    import io
+
+    bat = sc.run_battery(n_agents=300, steps=3, seeds=(0,))
+    fig = sc.battery_figure(bat)
+    try:
+        titles = " ".join(ax.get_title().lower() for ax in fig.axes)
+        assert "detection" in titles
+        assert "trust" in titles
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        assert buf.getvalue().startswith(b"\x89PNG\r\n\x1a\n")
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)

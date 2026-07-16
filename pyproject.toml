@@ -41,4 +41,7 @@ filterwarnings = [
   # test-size Sobol samples can leave an output with zero variance; the
   # resulting NaN indices are expected and sanitized by consumers.
   "ignore:invalid value encountered in divide:RuntimeWarning:SALib.analyze.sobol",
+  # np.where(deg > 0, 1.0/deg, 0) evaluates 1/0 for isolated nodes, which
+  # tiny test populations produce; harmless by design.
+  "ignore:divide by zero encountered in divide:RuntimeWarning:dfl24sim.network",
 ]

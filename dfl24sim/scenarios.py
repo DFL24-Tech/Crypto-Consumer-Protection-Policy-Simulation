@@ -190,6 +190,31 @@ def run_battery(n_agents=15000, steps=14, seeds=(0, 1, 2)):
 
 
 # ---- scenario study: run everything, save tables + figures --------------------------
+def battery_figure(bat):
+    """Coverage + trust heatmaps for a policy × attack battery frame.
+
+    Returns the matplotlib Figure; the caller owns saving and closing it.
+    Shared by the paper study driver and the server's artifact-producing jobs.
+    """
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    cov = bat.pivot(index="policy", columns="attack", values="coverage")
+    tr = bat.pivot(index="policy", columns="attack", values="final_trust")
+    order = ["laissez_faire", "standard", "over_friction", "tiered"]
+    cov = cov.reindex(order); tr = tr.reindex(order)
+    fig, axes = plt.subplots(1, 2, figsize=(13, 3.6))
+    sns.heatmap(cov, annot=True, fmt=".2f", cmap="Blues", ax=axes[0], cbar_kws={"label": "coverage"})
+    axes[0].set_title("Adversary detection by policy × attack")
+    sns.heatmap(tr, annot=True, fmt=".2f", cmap="RdYlGn", ax=axes[1], vmin=0.4, vmax=0.65,
+                cbar_kws={"label": "final trust"})
+    axes[1].set_title("User trust by policy × attack")
+    for a in axes:
+        a.set_xlabel(""); a.set_ylabel("")
+    fig.tight_layout()
+    return fig
+
+
 def run_study(out_dir, n_agents=15000, steps=14, seeds=(0, 1, 2, 3)):
     import os, json
     import matplotlib; matplotlib.use("Agg")
@@ -224,19 +249,8 @@ def run_study(out_dir, n_agents=15000, steps=14, seeds=(0, 1, 2, 3)):
     fig.savefig(f"{out_dir}/fig_scenario_markets.png"); plt.close(fig)
 
     # Figure 2: battery heatmaps (coverage + trust)
-    cov = bat.pivot(index="policy", columns="attack", values="coverage")
-    tr = bat.pivot(index="policy", columns="attack", values="final_trust")
-    order = ["laissez_faire", "standard", "over_friction", "tiered"]
-    cov = cov.reindex(order); tr = tr.reindex(order)
-    fig, axes = plt.subplots(1, 2, figsize=(13, 3.6))
-    sns.heatmap(cov, annot=True, fmt=".2f", cmap="Blues", ax=axes[0], cbar_kws={"label": "coverage"})
-    axes[0].set_title("Adversary detection by policy × attack")
-    sns.heatmap(tr, annot=True, fmt=".2f", cmap="RdYlGn", ax=axes[1], vmin=0.4, vmax=0.65,
-                cbar_kws={"label": "final trust"})
-    axes[1].set_title("User trust by policy × attack")
-    for a in axes:
-        a.set_xlabel(""); a.set_ylabel("")
-    fig.tight_layout(); fig.savefig(f"{out_dir}/fig_battery.png"); plt.close(fig)
+    fig = battery_figure(bat)
+    fig.savefig(f"{out_dir}/fig_battery.png"); plt.close(fig)
 
     # Figure 3: policy trade-off (coverage vs trust) — shows over-friction dominated
     fig, ax = plt.subplots(figsize=(6.6, 4.4))
