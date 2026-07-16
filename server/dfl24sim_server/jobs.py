@@ -143,6 +143,10 @@ _GSA_INDEX_VOCAB = {
 
 def _execute_gsa(params: dict) -> dict:
     method = params["method"]
+    if method not in _GSA_INDEX_VOCAB:
+        # the tool validates too; guard here so a corrupt job row fails
+        # before minutes of sampling, not after
+        raise ValueError(f"unknown gsa method {method!r}")
     if method == "morris":
         raw = gsa.run_morris(
             n_agents=params["n_agents"], steps=params["steps"],
