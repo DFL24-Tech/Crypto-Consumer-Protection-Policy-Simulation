@@ -1,12 +1,61 @@
+# Dev defaults live in the ${VAR:-default} fallbacks; override via a .env file
+# (see .env.example) — never by editing this file.
+x-db-env: &db-env
+  DFL24_DATABASE_URL: postgresql://${POSTGRES_USER:-dfl24}:${POSTGRES_PASSWORD:-dfl24}@postgres:5432/${POSTGRES_DB:-dfl24sim}
+
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dfl24}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dfl24}
+      POSTGRES_DB: ${POSTGRES_DB:-dfl24sim}
+    ports:
+      # host-side only; in-network clients always use postgres:5432
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dfl24} -d ${POSTGRES_DB:-dfl24sim}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    command: ["python", "-m", "dfl24sim_server.migrate"]
+    environment: *db-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   server:
     build:
       context: .
       dockerfile: server/Dockerfile
     ports:
       - "8000:8000"
+    environment: *db-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 3s
       retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    command: ["python", "-m", "dfl24sim_server.worker"]
+    environment: *db-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

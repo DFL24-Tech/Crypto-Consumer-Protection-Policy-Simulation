@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
+.env
 DFL24-Sim_WhitePaper.pdf

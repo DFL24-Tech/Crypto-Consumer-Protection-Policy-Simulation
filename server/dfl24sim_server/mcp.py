@@ -1,11 +1,15 @@
 """The DFL24-Sim MCP server: tools a policy analyst's LLM can call."""
 import math
+import uuid
 from dataclasses import replace
 
+import psycopg
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from dfl24sim import SimConfig, run, scenarios
+
+from . import db, jobs
 
 mcp = FastMCP("DFL24-Sim")
 
@@ -163,4 +167,96 @@ def run_scenario(
         "seeds": seeds,
         "metrics": metrics,
         "per_seed": per_seed,
+    }
+
+
+@mcp.tool
+async def run_study(n_agents: int = 15_000, steps: int = 14, seeds: int = 3) -> dict:
+    """Trigger the full policy × attack study as a background job (fire-and-forget).
+
+    Crosses every policy regime (laissez_faire, standard, over_friction,
+    tiered) with every attack world (pump_dump, sybil_farm, laundering,
+    adaptive_redteam, pig_butchering) across `seeds` replications — the study
+    behind the battery figure. It runs on a worker for minutes: this tool
+    returns a `job_id` immediately; check progress with get_job_status and
+    fetch the numbers with get_job_result when done. Caps: n_agents <= 100000,
+    steps <= 60, seeds <= 8.
+    """
+    _check_caps(n_agents, steps, seeds)
+    params = {"n_agents": n_agents, "steps": steps, "seeds": seeds}
+    job_id = str(uuid.uuid4())
+    # job row + queue entry commit atomically: no orphaned rows either way
+    async with await psycopg.AsyncConnection.connect(db.get_dsn()) as conn:
+        await db.create_job(conn, job_id, "study", params)
+        await jobs.run_study_job.configure(connection=conn).defer_async(
+            job_id=job_id, params=params
+        )
+        await conn.commit()
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "job_type": "study",
+        "config_hash": db.config_hash(params),
+        "params": params,
+    }
+
+
+def _job_payload(job: dict) -> dict:
+    return {
+        "job_id": job["job_id"],
+        "job_type": job["job_type"],
+        "status": job["status"],
+        "params": job["params"],
+        "config_hash": job["config_hash"],
+        "error": job["error"],
+        "created_at": job["created_at"].isoformat(),
+        "started_at": job["started_at"].isoformat() if job["started_at"] else None,
+        "finished_at": job["finished_at"].isoformat() if job["finished_at"] else None,
+    }
+
+
+@mcp.tool
+async def get_job_status(job_id: str | None = None) -> dict:
+    """Check on a background job, or list the recent ones.
+
+    With a `job_id`: reports its status — queued, running, done, or failed
+    (with the error message when failed). Without: lists the 20 most recent
+    jobs, newest first. Results of a done job are fetched with get_job_result.
+    """
+    if job_id is None:
+        recent = await db.list_recent(db.get_dsn())
+        return {"recent": [_job_payload(job) for job in recent]}
+    job = await db.get_job(db.get_dsn(), job_id)
+    if job is None:
+        raise ToolError(f"No job with id {job_id!r}. Use get_job_status without "
+                        "arguments to list recent jobs.")
+    return _job_payload(job)
+
+
+@mcp.tool
+async def get_job_result(job_id: str) -> dict:
+    """Fetch the result of a completed background job (see run_study).
+
+    Only works once get_job_status reports the job as done; errors otherwise
+    with the job's current state. For a study job the result contains
+    `battery`: one row per policy regime × attack world with `coverage`,
+    `retail_burn`, `final_trust`, and `precision` averaged across seeds.
+    """
+    job = await db.get_job(db.get_dsn(), job_id)
+    if job is None:
+        raise ToolError(f"No job with id {job_id!r}. Use get_job_status without "
+                        "arguments to list recent jobs.")
+    if job["status"] != "done":
+        detail = f": {job['error']}" if job["error"] else ""
+        raise ToolError(
+            f"Job {job_id} is {job['status']}{detail}. Results are only "
+            "available once get_job_status reports it as done."
+        )
+    return {
+        "job_id": job["job_id"],
+        "job_type": job["job_type"],
+        "status": job["status"],
+        "params": job["params"],
+        "config_hash": job["config_hash"],
+        "result": job["result"],
     }
