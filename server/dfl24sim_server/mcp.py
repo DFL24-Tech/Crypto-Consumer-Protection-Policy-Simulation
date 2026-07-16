@@ -461,6 +461,10 @@ async def get_artifact(
         "name": match["name"],
         "kind": match["kind"],
         "size_bytes": match["size_bytes"],
-        "url": storage.presign(match["key"], expires_in=expires_in),
+        # sign the bucket recorded at upload; rows predating that field fall
+        # back to the currently configured bucket
+        "url": storage.presign(
+            match["key"], expires_in=expires_in, bucket=match.get("bucket")
+        ),
         "expires_in_seconds": expires_in,
     }
