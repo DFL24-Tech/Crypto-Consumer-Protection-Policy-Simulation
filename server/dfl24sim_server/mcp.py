@@ -9,7 +9,7 @@ from fastmcp.exceptions import ToolError
 
 from dfl24sim import SimConfig, run, scenarios, sweeps
 
-from . import db, jobs, reference
+from . import db, jobs, reference, storage
 
 mcp = FastMCP("DFL24-Sim")
 
@@ -349,10 +349,19 @@ def _job_payload(job: dict) -> dict:
         "params": job["params"],
         "config_hash": job["config_hash"],
         "error": job["error"],
+        "warning": job["warning"],
         "created_at": job["created_at"].isoformat(),
         "started_at": job["started_at"].isoformat() if job["started_at"] else None,
         "finished_at": job["finished_at"].isoformat() if job["finished_at"] else None,
     }
+
+
+def _artifact_listing(job: dict) -> list[dict]:
+    # storage keys stay internal; analysts address artifacts by name
+    return [
+        {"name": a["name"], "kind": a["kind"], "size_bytes": a["size_bytes"]}
+        for a in (job["artifacts"] or [])
+    ]
 
 
 @mcp.tool
@@ -399,4 +408,59 @@ async def get_job_result(job_id: str) -> dict:
         "params": job["params"],
         "config_hash": job["config_hash"],
         "result": job["result"],
+        "artifacts": _artifact_listing(job),
+        "warning": job["warning"],
+    }
+
+
+@mcp.tool
+async def get_artifact(
+    job_id: str, name: str | None = None, expires_in: int = 900
+) -> dict:
+    """Fetch a completed job's heavy artifacts — figures and data files.
+
+    Without `name`: lists the job's artifacts (name, kind, size_bytes); a
+    study job produces `fig_battery.png` (the policy x attack heatmaps) and
+    `battery.parquet` (the underlying frame). With `name`: returns a signed
+    URL serving that file, valid for `expires_in` seconds (default 15
+    minutes, max 24 hours). The JSON summary of get_job_result never needs
+    this — object storage only holds the heavy extras.
+    """
+    job = await db.get_job(db.get_dsn(), job_id)
+    if job is None:
+        raise ToolError(f"No job with id {job_id!r}. Use get_job_status without "
+                        "arguments to list recent jobs.")
+    if job["status"] != "done":
+        raise ToolError(
+            f"Job {job_id} is {job['status']}; artifacts exist once "
+            "get_job_status reports it as done."
+        )
+    listing = _artifact_listing(job)
+    if name is None:
+        payload = {"job_id": job_id, "artifacts": listing}
+        if job["warning"]:
+            payload["warning"] = job["warning"]
+        return payload
+    match = next((a for a in (job["artifacts"] or []) if a["name"] == name), None)
+    if match is None:
+        raise ToolError(
+            f"no artifact {name!r} for job {job_id}; available: "
+            f"{sorted(a['name'] for a in listing)}"
+        )
+    if not 1 <= expires_in <= 86_400:
+        raise ToolError(
+            f"expires_in={expires_in} is outside the allowed range 1..86400 seconds."
+        )
+    if not storage.is_configured():
+        raise ToolError(
+            "object storage is not configured on this server; the artifact "
+            "cannot be served."
+        )
+    return {
+        "job_id": job_id,
+        "name": match["name"],
+        "kind": match["kind"],
+        "size_bytes": match["size_bytes"],
+        "url": storage.presign(match["key"], expires_in=expires_in),
+        "expires_in_seconds": expires_in,
     }

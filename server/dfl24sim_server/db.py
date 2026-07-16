@@ -18,16 +18,21 @@ CREATE TABLE IF NOT EXISTS sim_jobs (
     status TEXT NOT NULL DEFAULT 'queued',
     result JSONB,
     error TEXT,
+    artifacts JSONB,
+    warning TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ
 );
+-- additive migration for deployments created before artifact storage
+ALTER TABLE sim_jobs ADD COLUMN IF NOT EXISTS artifacts JSONB;
+ALTER TABLE sim_jobs ADD COLUMN IF NOT EXISTS warning TEXT;
 CREATE INDEX IF NOT EXISTS sim_jobs_created_idx ON sim_jobs (created_at DESC);
 """
 
 _JOB_COLUMNS = (
     "id, job_type, params, config_hash, status, result, error, "
-    "created_at, started_at, finished_at"
+    "artifacts, warning, created_at, started_at, finished_at"
 )
 
 
@@ -71,12 +76,23 @@ def mark_running(dsn: str, job_id: str) -> None:
         conn.commit()
 
 
-def mark_done(dsn: str, job_id: str, result: dict) -> None:
+def mark_done(
+    dsn: str,
+    job_id: str,
+    result: dict,
+    artifacts: list | None = None,
+    warning: str | None = None,
+) -> None:
     with psycopg.connect(dsn) as conn:
         conn.execute(
-            "UPDATE sim_jobs SET status = 'done', result = %s, finished_at = now() "
-            "WHERE id = %s",
-            (Jsonb(result), job_id),
+            "UPDATE sim_jobs SET status = 'done', result = %s, artifacts = %s, "
+            "warning = %s, finished_at = now() WHERE id = %s",
+            (
+                Jsonb(result),
+                Jsonb(artifacts) if artifacts is not None else None,
+                warning,
+                job_id,
+            ),
         )
         conn.commit()
 

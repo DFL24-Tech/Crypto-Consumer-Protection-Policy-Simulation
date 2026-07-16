@@ -3,6 +3,14 @@
 x-db-env: &db-env
   DFL24_DATABASE_URL: postgresql://${POSTGRES_USER:-dfl24}:${POSTGRES_PASSWORD:-dfl24}@postgres:5432/${POSTGRES_DB:-dfl24sim}
 
+x-s3-env: &s3-env
+  # in-network endpoint for uploads; the public one is what signed URLs carry
+  DFL24_S3_ENDPOINT: http://minio:9000
+  DFL24_S3_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_URL:-http://localhost:${MINIO_PORT:-9000}}
+  DFL24_S3_BUCKET: ${MINIO_BUCKET:-dfl24-artifacts}
+  DFL24_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-dfl24}
+  DFL24_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-dfl24secret}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -17,6 +25,24 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dfl24} -d ${POSTGRES_DB:-dfl24sim}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dfl24}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dfl24secret}
+    ports:
+      # host-side only; in-network clients always use minio:9000
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -37,7 +63,8 @@ services:
       dockerfile: server/Dockerfile
     ports:
       - "8000:8000"
-    environment: *db-env
+    environment:
+      <<: [*db-env, *s3-env]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -52,10 +79,16 @@ services:
       context: .
       dockerfile: server/Dockerfile
     command: ["python", "-m", "dfl24sim_server.worker"]
-    environment: *db-env
+    environment:
+      <<: [*db-env, *s3-env]
     depends_on:
       migrate:
         condition: service_completed_successfully
+      # jobs degrade to a warning without storage; the dep just avoids
+      # warnings during normal stack startup
+      minio:
+        condition: service_healthy
 
 volumes:
   pgdata:
+  miniodata:

@@ -1,16 +1,27 @@
 """The procrastinate app and job tasks executed by the worker."""
+import io
 import math
+from dataclasses import dataclass
 
 import procrastinate
 
 from dfl24sim import gsa, scenarios, sweeps
 from dfl24sim.calibrate import calibrate
 
-from . import db
+from . import db, storage
 
 app = procrastinate.App(
     connector=procrastinate.PsycopgConnector(conninfo=db.get_dsn())
 )
+
+
+@dataclass
+class ArtifactFile:
+    """A heavy job output bound for object storage, never for Postgres."""
+    name: str
+    kind: str  # "figure" | "data"
+    content_type: str
+    data: bytes
 
 
 def _json_safe(value):
@@ -24,24 +35,67 @@ def _json_safe(value):
     return value
 
 
+def _store_artifacts(
+    job_id: str, files: list[ArtifactFile]
+) -> tuple[list | None, str | None]:
+    """Upload what we can; a storage problem is a warning, never a job failure."""
+    if not files:
+        return None, None
+    if not storage.is_configured():
+        return None, (
+            "object storage not configured (DFL24_S3_ENDPOINT unset); "
+            "artifacts were skipped"
+        )
+    stored = []
+    try:
+        for file in files:
+            meta = storage.upload(job_id, file.name, file.data, file.content_type)
+            stored.append({**meta, "kind": file.kind})
+    except Exception as exc:
+        return (
+            stored or None,
+            f"artifact upload failed: {type(exc).__name__}: {exc}",
+        )
+    return stored, None
+
+
 def _run_tracked(job_id: str, params: dict, execute) -> None:
     dsn = db.get_dsn()
     db.mark_running(dsn, job_id)
     try:
-        result = _json_safe(execute(params))
+        result, files = execute(params)
+        result = _json_safe(result)
     except Exception as exc:
         db.mark_failed(dsn, job_id, f"{type(exc).__name__}: {exc}")
         raise
-    db.mark_done(dsn, job_id, result)
+    artifacts, warning = _store_artifacts(job_id, files)
+    db.mark_done(dsn, job_id, result, artifacts=artifacts, warning=warning)
 
 
-def _execute_study(params: dict) -> dict:
+def _execute_study(params: dict) -> tuple[dict, list[ArtifactFile]]:
+    import matplotlib.pyplot as plt
+
     df = scenarios.run_battery(
         n_agents=params["n_agents"],
         steps=params["steps"],
         seeds=tuple(range(params["seeds"])),
     )
-    return {"battery": df.to_dict(orient="records")}
+    parquet_buf = io.BytesIO()
+    df.to_parquet(parquet_buf)
+    fig = scenarios.battery_figure(df)
+    png_buf = io.BytesIO()
+    try:
+        fig.savefig(png_buf, format="png")
+    finally:
+        plt.close(fig)  # a leaked figure accumulates in the long-lived worker
+    files = [
+        ArtifactFile(
+            "battery.parquet", "data",
+            "application/vnd.apache.parquet", parquet_buf.getvalue(),
+        ),
+        ArtifactFile("fig_battery.png", "figure", "image/png", png_buf.getvalue()),
+    ]
+    return {"battery": df.to_dict(orient="records")}, files
 
 
 # The summary schemas below are the LLM's reading material: field names and
@@ -73,7 +127,7 @@ _MOMENT_VOCAB = {
 }
 
 
-def _execute_calibration(params: dict) -> dict:
+def _execute_calibration(params: dict) -> tuple[dict, list[ArtifactFile]]:
     res = calibrate(
         n_agents=params["n_agents"],
         steps=params["steps"],
@@ -105,7 +159,7 @@ def _execute_calibration(params: dict) -> dict:
             }
             for name, meaning in _MOMENT_VOCAB.items()
         ],
-    }
+    }, []
 
 
 _GSA_PARAM_VOCAB = {
@@ -141,7 +195,7 @@ _GSA_INDEX_VOCAB = {
 }
 
 
-def _execute_gsa(params: dict) -> dict:
+def _execute_gsa(params: dict) -> tuple[dict, list[ArtifactFile]]:
     method = params["method"]
     if method not in _GSA_INDEX_VOCAB:
         # the tool validates too; guard here so a corrupt job row fails
@@ -175,7 +229,7 @@ def _execute_gsa(params: dict) -> dict:
         "method": method,
         "index_meanings": _GSA_INDEX_VOCAB[method],
         "outputs": outputs,
-    }
+    }, []
 
 
 @app.task(name="dfl24sim.run_study")
@@ -188,14 +242,14 @@ def run_calibration_job(job_id: str, params: dict) -> None:
     _run_tracked(job_id, params, _execute_calibration)
 
 
-def _execute_sweep(params: dict) -> dict:
+def _execute_sweep(params: dict) -> tuple[dict, list[ArtifactFile]]:
     # the sweeps module carries the analyst vocabulary itself
     return sweeps.run_sweep(
         params["sweep"],
         n_agents=params["n_agents"],
         steps=params["steps"],
         seeds=tuple(range(params["seeds"])),
-    )
+    ), []
 
 
 @app.task(name="dfl24sim.run_gsa")

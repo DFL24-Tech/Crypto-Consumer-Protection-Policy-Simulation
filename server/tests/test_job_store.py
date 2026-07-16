@@ -24,6 +24,36 @@ async def test_create_and_get_job_roundtrip(job_db):
     assert job["error"] is None
 
 
+async def test_mark_done_stores_artifacts_and_warning(job_db):
+    job_id = str(uuid.uuid4())
+    async with await psycopg.AsyncConnection.connect(job_db) as conn:
+        await db.create_job(conn, job_id, "study", {"n_agents": 500})
+        await conn.commit()
+
+    artifacts = [{"name": "fig_battery.png", "key": f"jobs/{job_id}/fig_battery.png",
+                  "size_bytes": 123, "content_type": "image/png"}]
+    db.mark_done(job_db, job_id, {"battery": []}, artifacts=artifacts,
+                 warning="artifact upload failed: boom")
+
+    job = await db.get_job(job_db, job_id)
+    assert job["status"] == "done"
+    assert job["artifacts"] == artifacts
+    assert job["warning"] == "artifact upload failed: boom"
+
+
+async def test_mark_done_without_artifacts_leaves_them_null(job_db):
+    job_id = str(uuid.uuid4())
+    async with await psycopg.AsyncConnection.connect(job_db) as conn:
+        await db.create_job(conn, job_id, "calibration", {"iters": 2})
+        await conn.commit()
+
+    db.mark_done(job_db, job_id, {"fit": {}})
+
+    job = await db.get_job(job_db, job_id)
+    assert job["artifacts"] is None
+    assert job["warning"] is None
+
+
 async def test_get_job_returns_none_for_unknown_id(job_db):
     assert await db.get_job(job_db, str(uuid.uuid4())) is None
 
