@@ -63,3 +63,17 @@ async def test_run_simulation_rejects_over_cap_inputs(args, cap_text):
     async with Client(mcp) as client:
         with pytest.raises(ToolError, match=cap_text):
             await client.call_tool("run_simulation", args)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"n_agents": 0},
+        {"n_agents": 2000, "steps": 0},
+        {"n_agents": -5},
+    ],
+)
+async def test_run_simulation_rejects_non_positive_inputs(args):
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="at least 1"):
+            await client.call_tool("run_simulation", args)

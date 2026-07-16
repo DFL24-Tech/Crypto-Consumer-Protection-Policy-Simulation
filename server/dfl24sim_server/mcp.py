@@ -17,6 +17,9 @@ MAX_SEEDS = 8
 
 
 def _check_caps(n_agents: int, steps: int, seeds: int = 1) -> None:
+    for label, value in (("n_agents", n_agents), ("steps", steps), ("seeds", seeds)):
+        if value < 1:
+            raise ToolError(f"{label}={value} is invalid; {label} must be at least 1.")
     if n_agents > MAX_AGENTS:
         raise ToolError(
             f"n_agents={n_agents} exceeds the per-request cap of {MAX_AGENTS} agents."

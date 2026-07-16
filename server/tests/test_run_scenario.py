@@ -50,3 +50,11 @@ async def test_run_scenario_rejects_too_many_seeds():
             await client.call_tool(
                 "run_scenario", {"name": "A1_calm_baseline", "seeds": 9}
             )
+
+
+async def test_run_scenario_rejects_zero_seeds_with_clear_message():
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError, match="at least 1"):
+            await client.call_tool(
+                "run_scenario", {"name": "A1_calm_baseline", "seeds": 0}
+            )
