@@ -1,6 +1,11 @@
+.git/
+.venv/
 .claude/
 __pycache__/
 *.pyc
-.venv/
 *.egg-info/
+results/
+docs/
+tests/
+server/tests/
 DFL24-Sim_WhitePaper.pdf

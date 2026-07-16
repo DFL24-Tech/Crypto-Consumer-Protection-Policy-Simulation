@@ -32,3 +32,8 @@ dev = ["pytest>=7.0"]
 
 [tool.setuptools]
 packages = ["dfl24sim"]
+
+[tool.pytest.ini_options]
+# Scope the root run to the research suite; the server package under server/
+# carries its own pytest configuration and dependencies.
+testpaths = ["tests"]
