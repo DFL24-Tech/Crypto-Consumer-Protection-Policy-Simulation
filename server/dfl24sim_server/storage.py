@@ -70,20 +70,23 @@ def upload(job_id: str, name: str, data: bytes, content_type: str) -> dict:
     return {
         "name": name,
         "key": key,
+        "bucket": bucket_name(),
         "size_bytes": len(data),
         "content_type": content_type,
     }
 
 
-def presign(key: str, expires_in: int = 900) -> str:
+def presign(key: str, expires_in: int = 900, bucket: str | None = None) -> str:
     """Time-limited GET URL for one stored artifact.
 
     Signed against DFL24_S3_PUBLIC_ENDPOINT when set: SigV4 binds the host,
     and the URL must work from the analyst's browser, not the compose network.
+    Pass the bucket recorded at upload time so links to old artifacts survive
+    a DFL24_S3_BUCKET change; it defaults to the current setting.
     """
     public = os.environ.get("DFL24_S3_PUBLIC_ENDPOINT")
     return _client(endpoint=public).generate_presigned_url(
         "get_object",
-        Params={"Bucket": bucket_name(), "Key": key},
+        Params={"Bucket": bucket or bucket_name(), "Key": key},
         ExpiresIn=expires_in,
     )

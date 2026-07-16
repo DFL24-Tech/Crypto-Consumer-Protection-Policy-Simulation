@@ -11,6 +11,7 @@ def test_upload_returns_metadata_and_keys_by_job(artifact_store):
     assert meta == {
         "name": "fig_battery.png",
         "key": "jobs/job-1/fig_battery.png",
+        "bucket": "dfl24-artifacts",
         "size_bytes": 9,
         "content_type": "image/png",
     }
@@ -34,6 +35,16 @@ def test_presigned_url_expires(artifact_store):
 def test_storage_is_unconfigured_without_endpoint(monkeypatch):
     monkeypatch.delenv("DFL24_S3_ENDPOINT", raising=False)
     assert not storage.is_configured()
+
+
+def test_presign_signs_the_bucket_recorded_at_upload(artifact_store, monkeypatch):
+    """A later DFL24_S3_BUCKET change must not break links to old artifacts."""
+    meta = storage.upload("job-5", "a.txt", b"old-bucket-bytes", "text/plain")
+    monkeypatch.setenv("DFL24_S3_BUCKET", "renamed-bucket")
+    url = storage.presign(meta["key"], expires_in=60, bucket=meta["bucket"])
+    response = httpx.get(url)
+    assert response.status_code == 200
+    assert response.content == b"old-bucket-bytes"
 
 
 def test_presign_uses_the_public_endpoint_when_set(artifact_store, monkeypatch):
