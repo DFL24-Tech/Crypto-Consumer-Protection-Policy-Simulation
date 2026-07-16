@@ -9,7 +9,7 @@ from fastmcp.exceptions import ToolError
 
 from dfl24sim import SimConfig, run, scenarios
 
-from . import db, jobs
+from . import db, jobs, reference
 
 mcp = FastMCP("DFL24-Sim")
 
@@ -199,6 +199,35 @@ async def run_study(n_agents: int = 15_000, steps: int = 14, seeds: int = 3) -> 
         "config_hash": db.config_hash(params),
         "params": params,
     }
+
+
+@mcp.tool
+def get_reference_results(topic: str | None = None) -> dict:
+    """Look up the paper's precomputed headline numbers — no simulation run.
+
+    Serves the research artifacts bundled from the study behind the white
+    paper, instantly and with provenance (white-paper section and source
+    files). All numbers are simulation results from the DFL24-Sim model —
+    not field measurements; repeat that caveat when quoting them. Topics:
+    `calibration` (SMM fit, the ~14% first-exposure friction effect),
+    `sensitivity` (Morris + Sobol indices, parameter sweeps), `coverage`
+    (detection per adversary role, static vs adaptive), `fade` (per-step
+    erosion of the friction effect), `battery` (4 policy regimes x 5 attack
+    worlds), `validation` (stylized facts, Monte-Carlo convergence). Without
+    a topic, lists the supported topics.
+    """
+    if topic is None:
+        return {
+            "supported_topics": {
+                name: meta["headline"] for name, meta in reference.TOPICS.items()
+            },
+            "caveat": reference.CAVEAT,
+        }
+    if topic not in reference.TOPICS:
+        raise ToolError(
+            f"unknown topic {topic!r}; supported topics: {sorted(reference.TOPICS)}"
+        )
+    return reference.describe(topic)
 
 
 def _job_payload(job: dict) -> dict:
