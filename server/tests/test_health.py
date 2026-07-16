@@ -1,5 +1,5 @@
 """The plain-HTTP side of the app: a healthcheck for compose and load balancers."""
-from fastapi.testclient import TestClient
+from starlette.testclient import TestClient
 
 from dfl24sim_server.app import create_app
 

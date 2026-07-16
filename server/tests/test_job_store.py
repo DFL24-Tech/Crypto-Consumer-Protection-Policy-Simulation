@@ -54,6 +54,32 @@ async def test_mark_done_without_artifacts_leaves_them_null(job_db):
     assert job["warning"] is None
 
 
+async def test_jobs_are_scoped_by_org(job_db):
+    job_id = str(uuid.uuid4())
+    async with await psycopg.AsyncConnection.connect(job_db) as conn:
+        await db.create_job(conn, job_id, "study", {"n_agents": 100}, org_id="org-a")
+        await conn.commit()
+
+    assert (await db.get_job(job_db, job_id))["org_id"] == "org-a"
+    assert await db.get_job(job_db, job_id, org_id="org-a") is not None
+    # another organization's analyst sees nothing, same as an unknown id
+    assert await db.get_job(job_db, job_id, org_id="org-b") is None
+
+    recent_a = await db.list_recent(job_db, org_id="org-a")
+    recent_b = await db.list_recent(job_db, org_id="org-b")
+    assert job_id in {j["job_id"] for j in recent_a}
+    assert job_id not in {j["job_id"] for j in recent_b}
+
+
+async def test_create_job_defaults_to_the_dev_org(job_db):
+    job_id = str(uuid.uuid4())
+    async with await psycopg.AsyncConnection.connect(job_db) as conn:
+        await db.create_job(conn, job_id, "study", {"n_agents": 100})
+        await conn.commit()
+
+    assert (await db.get_job(job_db, job_id))["org_id"] == "dev"
+
+
 async def test_get_job_returns_none_for_unknown_id(job_db):
     assert await db.get_job(job_db, str(uuid.uuid4())) is None
 

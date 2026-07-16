@@ -20,20 +20,27 @@ CREATE TABLE IF NOT EXISTS sim_jobs (
     error TEXT,
     artifacts JSONB,
     warning TEXT,
+    org_id TEXT NOT NULL DEFAULT 'dev',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ
 );
--- additive migration for deployments created before artifact storage
+-- additive migrations for deployments created before these columns
 ALTER TABLE sim_jobs ADD COLUMN IF NOT EXISTS artifacts JSONB;
 ALTER TABLE sim_jobs ADD COLUMN IF NOT EXISTS warning TEXT;
+ALTER TABLE sim_jobs ADD COLUMN IF NOT EXISTS org_id TEXT NOT NULL DEFAULT 'dev';
 CREATE INDEX IF NOT EXISTS sim_jobs_created_idx ON sim_jobs (created_at DESC);
+CREATE INDEX IF NOT EXISTS sim_jobs_org_created_idx
+    ON sim_jobs (org_id, created_at DESC);
 """
 
 _JOB_COLUMNS = (
     "id, job_type, params, config_hash, status, result, error, "
-    "artifacts, warning, created_at, started_at, finished_at"
+    "artifacts, warning, org_id, created_at, started_at, finished_at"
 )
+
+# the organization every caller belongs to when auth is off (local dev)
+DEV_ORG = "dev"
 
 
 def get_dsn() -> str:
@@ -107,30 +114,42 @@ def mark_failed(dsn: str, job_id: str, error: str) -> None:
         conn.commit()
 
 
-async def create_job(conn, job_id: str, job_type: str, params: dict) -> None:
+async def create_job(
+    conn, job_id: str, job_type: str, params: dict, org_id: str = DEV_ORG
+) -> None:
     await conn.execute(
-        "INSERT INTO sim_jobs (id, job_type, params, config_hash) "
-        "VALUES (%s, %s, %s, %s)",
-        (job_id, job_type, Jsonb(params), config_hash(params)),
+        "INSERT INTO sim_jobs (id, job_type, params, config_hash, org_id) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (job_id, job_type, Jsonb(params), config_hash(params), org_id),
     )
 
 
-async def get_job(dsn: str, job_id: str) -> dict | None:
+async def get_job(dsn: str, job_id: str, org_id: str | None = None) -> dict | None:
+    """org_id scopes the lookup to one tenant; None is the unscoped internal view."""
+    query = f"SELECT {_JOB_COLUMNS} FROM sim_jobs WHERE id = %s"
+    args: tuple = (job_id,)
+    if org_id is not None:
+        query += " AND org_id = %s"
+        args = (job_id, org_id)
     async with await psycopg.AsyncConnection.connect(dsn) as conn:
         conn.row_factory = dict_row
-        cur = await conn.execute(
-            f"SELECT {_JOB_COLUMNS} FROM sim_jobs WHERE id = %s", (job_id,)
-        )
+        cur = await conn.execute(query, args)
         row = await cur.fetchone()
     return _to_job(row) if row else None
 
 
-async def list_recent(dsn: str, limit: int = 20) -> list[dict]:
+async def list_recent(
+    dsn: str, limit: int = 20, org_id: str | None = None
+) -> list[dict]:
+    query = f"SELECT {_JOB_COLUMNS} FROM sim_jobs"
+    args: tuple = ()
+    if org_id is not None:
+        query += " WHERE org_id = %s"
+        args = (org_id,)
+    query += " ORDER BY created_at DESC LIMIT %s"
+    args += (limit,)
     async with await psycopg.AsyncConnection.connect(dsn) as conn:
         conn.row_factory = dict_row
-        cur = await conn.execute(
-            f"SELECT {_JOB_COLUMNS} FROM sim_jobs ORDER BY created_at DESC LIMIT %s",
-            (limit,),
-        )
+        cur = await conn.execute(query, args)
         rows = await cur.fetchall()
     return [_to_job(row) for row in rows]

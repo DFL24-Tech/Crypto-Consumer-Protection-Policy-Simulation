@@ -10,6 +10,7 @@ from fastmcp.exceptions import ToolError
 from dfl24sim import SimConfig, run, scenarios, sweeps
 
 from . import db, jobs, reference, storage
+from .auth import caller_org
 
 mcp = FastMCP("DFL24-Sim")
 
@@ -194,9 +195,10 @@ async def run_study(n_agents: int = 15_000, steps: int = 14, seeds: int = 3) -> 
 
 async def _enqueue_job(job_type: str, task, params: dict) -> dict:
     job_id = str(uuid.uuid4())
+    org_id = caller_org()
     # job row + queue entry commit atomically: no orphaned rows either way
     async with await psycopg.AsyncConnection.connect(db.get_dsn()) as conn:
-        await db.create_job(conn, job_id, job_type, params)
+        await db.create_job(conn, job_id, job_type, params, org_id=org_id)
         await task.configure(connection=conn).defer_async(job_id=job_id, params=params)
         await conn.commit()
     return {
@@ -372,10 +374,11 @@ async def get_job_status(job_id: str | None = None) -> dict:
     (with the error message when failed). Without: lists the 20 most recent
     jobs, newest first. Results of a done job are fetched with get_job_result.
     """
+    org_id = caller_org()
     if job_id is None:
-        recent = await db.list_recent(db.get_dsn())
+        recent = await db.list_recent(db.get_dsn(), org_id=org_id)
         return {"recent": [_job_payload(job) for job in recent]}
-    job = await db.get_job(db.get_dsn(), job_id)
+    job = await db.get_job(db.get_dsn(), job_id, org_id=org_id)
     if job is None:
         raise ToolError(f"No job with id {job_id!r}. Use get_job_status without "
                         "arguments to list recent jobs.")
@@ -391,7 +394,7 @@ async def get_job_result(job_id: str) -> dict:
     `battery`: one row per policy regime × attack world with `coverage`,
     `retail_burn`, `final_trust`, and `precision` averaged across seeds.
     """
-    job = await db.get_job(db.get_dsn(), job_id)
+    job = await db.get_job(db.get_dsn(), job_id, org_id=caller_org())
     if job is None:
         raise ToolError(f"No job with id {job_id!r}. Use get_job_status without "
                         "arguments to list recent jobs.")
@@ -426,7 +429,7 @@ async def get_artifact(
     minutes, max 24 hours). The JSON summary of get_job_result never needs
     this — object storage only holds the heavy extras.
     """
-    job = await db.get_job(db.get_dsn(), job_id)
+    job = await db.get_job(db.get_dsn(), job_id, org_id=caller_org())
     if job is None:
         raise ToolError(f"No job with id {job_id!r}. Use get_job_status without "
                         "arguments to list recent jobs.")
