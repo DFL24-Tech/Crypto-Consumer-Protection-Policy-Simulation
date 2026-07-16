@@ -7,7 +7,7 @@ import psycopg
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from dfl24sim import SimConfig, run, scenarios
+from dfl24sim import SimConfig, run, scenarios, sweeps
 
 from . import db, jobs, reference
 
@@ -18,6 +18,11 @@ mcp = FastMCP("DFL24-Sim")
 MAX_AGENTS = 100_000
 MAX_STEPS = 60
 MAX_SEEDS = 8
+# Background-job caps: a job may run minutes, not hours.
+MAX_CAL_ITERS = 100
+MAX_MORRIS_TRAJECTORIES = 32
+MAX_SOBOL_SAMPLES = 128
+GSA_DEFAULT_SAMPLES = {"morris": 12, "sobol": 64}
 
 
 def _check_caps(n_agents: int, steps: int, seeds: int = 1) -> None:
@@ -184,21 +189,127 @@ async def run_study(n_agents: int = 15_000, steps: int = 14, seeds: int = 3) -> 
     """
     _check_caps(n_agents, steps, seeds)
     params = {"n_agents": n_agents, "steps": steps, "seeds": seeds}
+    return await _enqueue_job("study", jobs.run_study_job, params)
+
+
+async def _enqueue_job(job_type: str, task, params: dict) -> dict:
     job_id = str(uuid.uuid4())
     # job row + queue entry commit atomically: no orphaned rows either way
     async with await psycopg.AsyncConnection.connect(db.get_dsn()) as conn:
-        await db.create_job(conn, job_id, "study", params)
-        await jobs.run_study_job.configure(connection=conn).defer_async(
-            job_id=job_id, params=params
-        )
+        await db.create_job(conn, job_id, job_type, params)
+        await task.configure(connection=conn).defer_async(job_id=job_id, params=params)
         await conn.commit()
     return {
         "job_id": job_id,
         "status": "queued",
-        "job_type": "study",
+        "job_type": job_type,
         "config_hash": db.config_hash(params),
         "params": params,
     }
+
+
+@mcp.tool
+async def run_calibration(
+    n_agents: int = 4000,
+    steps: int = 10,
+    iters: int = 40,
+    n_seeds: int = 3,
+    seed: int = 0,
+) -> dict:
+    """Trigger SMM calibration as a background job (fire-and-forget).
+
+    Re-estimates the headline behavioural parameters by simulated method of
+    moments against the field-anchored targets: phi (friction attention boost,
+    drives efficacy), eta (habituation rate, drives the fade), a0 (arbitration
+    intercept), and beta_r (System-1 risk appetite). Runs on a worker for
+    minutes: returns a `job_id` immediately; check progress with
+    get_job_status and fetch the fitted parameters and fit diagnostics with
+    get_job_result. Caps: n_agents <= 100000, steps <= 60, n_seeds <= 8,
+    iters <= 100.
+    """
+    _check_caps(n_agents, steps, n_seeds)
+    if not 1 <= iters <= MAX_CAL_ITERS:
+        raise ToolError(
+            f"iters={iters} is outside the allowed range 1..{MAX_CAL_ITERS}."
+        )
+    params = {
+        "n_agents": n_agents, "steps": steps, "iters": iters,
+        "n_seeds": n_seeds, "seed": seed,
+    }
+    return await _enqueue_job("calibration", jobs.run_calibration_job, params)
+
+
+@mcp.tool
+async def run_gsa(
+    method: str = "morris",
+    n_agents: int = 3000,
+    steps: int = 12,
+    samples: int | None = None,
+    seed: int = 0,
+) -> dict:
+    """Trigger global sensitivity analysis as a background job (fire-and-forget).
+
+    Ranks the seven behavioural/market parameters by influence on the four
+    headline outputs (efficacy, fade, coverage, trust). `method="morris"` is
+    the cheap elementary-effects screening; `samples` is its trajectory count
+    (default 12, cap 32; simulation runs = samples x 8). `method="sobol"` is
+    the variance decomposition; `samples` is its base sample, a power of two
+    (default 64, cap 128; runs = samples x 9). Runs minutes on a worker:
+    returns a `job_id` immediately; check with get_job_status and fetch the
+    per-parameter indices with get_job_result. Caps: n_agents <= 100000,
+    steps <= 60.
+    """
+    if method not in GSA_DEFAULT_SAMPLES:
+        raise ToolError(
+            f"unknown method {method!r}; valid methods: "
+            f"{sorted(GSA_DEFAULT_SAMPLES)}"
+        )
+    _check_caps(n_agents, steps)
+    if samples is None:
+        samples = GSA_DEFAULT_SAMPLES[method]
+    cap = MAX_MORRIS_TRAJECTORIES if method == "morris" else MAX_SOBOL_SAMPLES
+    if not 1 <= samples <= cap:
+        raise ToolError(
+            f"samples={samples} is outside the allowed range 1..{cap} "
+            f"for method {method!r}."
+        )
+    if method == "sobol" and samples & (samples - 1):
+        raise ToolError(f"samples={samples} must be a power of two for sobol.")
+    params = {
+        "method": method, "n_agents": n_agents, "steps": steps,
+        "samples": samples, "seed": seed,
+    }
+    return await _enqueue_job("gsa", jobs.run_gsa_job, params)
+
+
+@mcp.tool
+async def run_sweep(
+    sweep: str,
+    n_agents: int = 6000,
+    steps: int = 14,
+    seeds: int = 2,
+) -> dict:
+    """Trigger a one-at-a-time robustness sweep as a background job (fire-and-forget).
+
+    Varies one mechanism over the paper's grid, everything else at the
+    calibrated baseline — the check of which white-paper conclusions survive
+    miscalibration. Sweeps: `friction_efficacy` (phi -> first-exposure
+    effect), `habituation_fade` (eta -> fade ratio), `adaptive_coverage`
+    (epsilon -> sybil detection, with the static reference),
+    `overfriction_trust` (theta_fa -> trust vs the tiered regime),
+    `grooming_victim_reduction` (grooming pressure -> victims saved by
+    friction), `margin_systemic` (margin -> liquidations and drawdown). Runs
+    minutes on a worker: returns a `job_id` immediately; check with
+    get_job_status and fetch the grid of outcomes with get_job_result. Caps:
+    n_agents <= 100000, steps <= 60, seeds <= 8.
+    """
+    if sweep not in sweeps.SWEEPS:
+        raise ToolError(
+            f"unknown sweep {sweep!r}; valid sweeps: {sorted(sweeps.SWEEPS)}"
+        )
+    _check_caps(n_agents, steps, seeds)
+    params = {"sweep": sweep, "n_agents": n_agents, "steps": steps, "seeds": seeds}
+    return await _enqueue_job("sweep", jobs.run_sweep_job, params)
 
 
 @mcp.tool
