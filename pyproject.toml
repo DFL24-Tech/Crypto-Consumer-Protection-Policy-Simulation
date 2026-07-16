@@ -37,3 +37,8 @@ packages = ["dfl24sim"]
 # Scope the root run to the research suite; the server package under server/
 # carries its own pytest configuration and dependencies.
 testpaths = ["tests"]
+filterwarnings = [
+  # test-size Sobol samples can leave an output with zero variance; the
+  # resulting NaN indices are expected and sanitized by consumers.
+  "ignore:invalid value encountered in divide:RuntimeWarning:SALib.analyze.sobol",
+]
