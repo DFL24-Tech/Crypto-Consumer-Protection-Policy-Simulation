@@ -3,6 +3,12 @@
 x-db-env: &db-env
   DFL24_DATABASE_URL: postgresql://${POSTGRES_USER:-dfl24}:${POSTGRES_PASSWORD:-dfl24}@postgres:5432/${POSTGRES_DB:-dfl24sim}
 
+x-auth-env: &auth-env
+  # empty = no-auth dev mode; set AUTHKIT_DOMAIN to enable the WorkOS OAuth
+  # flow (see server/dfl24sim_server/auth.py for the two modes)
+  DFL24_AUTHKIT_DOMAIN: ${AUTHKIT_DOMAIN:-}
+  DFL24_SERVER_BASE_URL: ${SERVER_BASE_URL:-http://localhost:8000}
+
 x-s3-env: &s3-env
   # in-network endpoint for uploads; the public one is what signed URLs carry
   DFL24_S3_ENDPOINT: http://minio:9000
@@ -64,7 +70,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      <<: [*db-env, *s3-env]
+      <<: [*db-env, *s3-env, *auth-env]
     depends_on:
       migrate:
         condition: service_completed_successfully
