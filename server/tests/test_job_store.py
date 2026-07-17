@@ -80,6 +80,72 @@ async def test_create_job_defaults_to_the_dev_org(job_db):
     assert (await db.get_job(job_db, job_id))["org_id"] == "dev"
 
 
+async def test_list_active_jobs_returns_only_queued_and_running_for_the_org(job_db):
+    # the test database isn't truncated between tests, so each test needs its
+    # own org id — a literal like "org-a" would pick up other tests' rows
+    org_a, org_b = f"org-{uuid.uuid4()}", f"org-{uuid.uuid4()}"
+
+    async def _job(status, org_id):
+        job_id = str(uuid.uuid4())
+        async with await psycopg.AsyncConnection.connect(job_db) as conn:
+            await db.create_job(conn, job_id, "study", {"n": job_id}, org_id=org_id)
+            await conn.commit()
+        if status == "running":
+            db.mark_running(job_db, job_id)
+        elif status == "done":
+            db.mark_done(job_db, job_id, {})
+        elif status == "failed":
+            db.mark_failed(job_db, job_id, "boom")
+        return job_id
+
+    queued = await _job("queued", org_a)
+    running = await _job("running", org_a)
+    await _job("done", org_a)
+    await _job("failed", org_a)
+    other_org_queued = await _job("queued", org_b)
+
+    active = await db.list_active_jobs(job_db, org_a)
+    assert {j["job_id"] for j in active} == {queued, running}
+    assert {j["job_id"] for j in active}.isdisjoint({other_org_queued})
+
+
+async def test_find_cached_job_matches_org_type_and_hash(job_db):
+    org_a, org_b = f"org-{uuid.uuid4()}", f"org-{uuid.uuid4()}"
+    job_id = str(uuid.uuid4())
+    params = {"n_agents": 300, "steps": 3, "_nonce": job_id}
+    async with await psycopg.AsyncConnection.connect(job_db) as conn:
+        await db.create_job(conn, job_id, "study", params, org_id=org_a)
+        await conn.commit()
+    db.mark_done(job_db, job_id, {"battery": []})
+
+    h = db.config_hash(params)
+    hit = await db.find_cached_job(job_db, org_a, "study", h)
+    assert hit is not None and hit["job_id"] == job_id
+
+    # a different org, a different job type, and a queued (not done) job
+    # must not be returned as a cache hit
+    assert await db.find_cached_job(job_db, org_b, "study", h) is None
+    assert await db.find_cached_job(job_db, org_a, "calibration", h) is None
+    assert await db.find_cached_job(job_db, org_a, "study", "not-a-real-hash") is None
+
+
+async def test_find_cached_job_prefers_the_most_recent_match(job_db):
+    org_a = f"org-{uuid.uuid4()}"
+    params = {"n_agents": 300, "_nonce": org_a}
+    h = db.config_hash(params)
+    ids = []
+    for _ in range(2):
+        job_id = str(uuid.uuid4())
+        async with await psycopg.AsyncConnection.connect(job_db) as conn:
+            await db.create_job(conn, job_id, "study", params, org_id=org_a)
+            await conn.commit()
+        db.mark_done(job_db, job_id, {})
+        ids.append(job_id)
+
+    hit = await db.find_cached_job(job_db, org_a, "study", h)
+    assert hit["job_id"] == ids[-1]
+
+
 async def test_get_job_returns_none_for_unknown_id(job_db):
     assert await db.get_job(job_db, str(uuid.uuid4())) is None
 

@@ -138,6 +138,36 @@ async def get_job(dsn: str, job_id: str, org_id: str | None = None) -> dict | No
     return _to_job(row) if row else None
 
 
+async def list_active_jobs(dsn: str, org_id: str) -> list[dict]:
+    """An org's queued or running jobs — what counts against its quota."""
+    async with await psycopg.AsyncConnection.connect(dsn) as conn:
+        conn.row_factory = dict_row
+        cur = await conn.execute(
+            f"SELECT {_JOB_COLUMNS} FROM sim_jobs "
+            "WHERE org_id = %s AND status IN ('queued', 'running') "
+            "ORDER BY created_at",
+            (org_id,),
+        )
+        rows = await cur.fetchall()
+    return [_to_job(row) for row in rows]
+
+
+async def find_cached_job(
+    dsn: str, org_id: str, job_type: str, config_hash: str
+) -> dict | None:
+    """The most recent completed job with identical org, type, and params."""
+    async with await psycopg.AsyncConnection.connect(dsn) as conn:
+        conn.row_factory = dict_row
+        cur = await conn.execute(
+            f"SELECT {_JOB_COLUMNS} FROM sim_jobs "
+            "WHERE org_id = %s AND job_type = %s AND config_hash = %s "
+            "AND status = 'done' ORDER BY created_at DESC LIMIT 1",
+            (org_id, job_type, config_hash),
+        )
+        row = await cur.fetchone()
+    return _to_job(row) if row else None
+
+
 async def list_recent(
     dsn: str, limit: int = 20, org_id: str | None = None
 ) -> list[dict]:
