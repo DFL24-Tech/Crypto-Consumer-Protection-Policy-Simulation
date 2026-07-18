@@ -4,14 +4,16 @@ Each test authenticates as a distinct fake org (via the same RemoteAuthProvider
 machinery as test_auth_tenancy.py) so quota/cache state from one test can
 never leak into another, without relying on the test database being reset.
 """
+import asyncio
 import uuid
 
 import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
+from dfl24sim_server import db, jobs
 from dfl24sim_server.app import create_app
-from dfl24sim_server.mcp import mcp
+from dfl24sim_server.mcp import ORG_JOB_QUOTA, _enqueue_job, mcp
 
 from conftest import drain_worker
 from test_auth_tenancy import TOKENS, _free_port, _running_app
@@ -179,3 +181,30 @@ async def test_a_dedup_hit_does_not_consume_quota(two_org_client_factory, job_db
         hit = (await client.call_tool("run_calibration", FAST_CALIBRATION)).data
         assert hit["cache_hit"] is True
         assert hit["job_id"] == cached["job_id"]
+
+
+async def test_concurrent_triggers_for_one_org_cannot_exceed_quota(job_db):
+    """The quota check and the insert must be atomic per org.
+
+    Fires more simultaneous triggers than the quota allows, from one org
+    starting empty (the no-auth 'dev' org). If the check and the insert are
+    not serialized, several triggers all read a below-quota count before any
+    of them commits, and the org ends up over quota. Calls the enqueue funnel
+    directly so the coroutines genuinely overlap on the database.
+    """
+    async def trigger(seed: int) -> str:
+        params = {**FAST_CALIBRATION, "seed": seed}
+        try:
+            result = await _enqueue_job(
+                "calibration", jobs.run_calibration_job, params
+            )
+            return result["status"]
+        except ToolError:
+            return "rejected"
+
+    statuses = await asyncio.gather(*(trigger(seed) for seed in range(6)))
+
+    assert statuses.count("queued") == ORG_JOB_QUOTA
+    assert statuses.count("rejected") == 6 - ORG_JOB_QUOTA
+    active = await db.list_active_jobs(job_db, db.DEV_ORG)
+    assert len(active) == ORG_JOB_QUOTA

@@ -211,35 +211,41 @@ async def _enqueue_job(
 ) -> dict:
     org_id = caller_org()
     config_hash = db.config_hash(params)
-    dsn = db.get_dsn()
 
-    if not force:
-        cached = await db.find_cached_job(dsn, org_id, job_type, config_hash)
-        if cached is not None:
-            return {
-                "job_id": cached["job_id"],
-                "status": cached["status"],
-                "job_type": job_type,
-                "config_hash": config_hash,
-                "params": params,
-                "cache_hit": True,
-            }
+    # One transaction holds the org's advisory lock across the whole decision:
+    # dedup lookup, quota check, and the insert are atomic against concurrent
+    # triggers for the same org, so two callers cannot both pass the quota gate
+    # and both create a job. The lock releases when this transaction ends.
+    async with await psycopg.AsyncConnection.connect(db.get_dsn()) as conn:
+        await db.lock_org(conn, org_id)
 
-    active = await db.list_active_jobs(dsn, org_id)
-    if len(active) >= ORG_JOB_QUOTA:
-        raise ToolError(
-            f"organization {org_id!r} is at its job quota "
-            f"({ORG_JOB_QUOTA} concurrent jobs); active jobs: "
-            f"{_active_jobs_summary(active)}. Wait for one to finish or check "
-            "its result with get_job_status/get_job_result before retrying."
-        )
+        if not force:
+            cached = await db.cached_job(conn, org_id, job_type, config_hash)
+            if cached is not None:
+                return {
+                    "job_id": cached["job_id"],
+                    "status": cached["status"],
+                    "job_type": job_type,
+                    "config_hash": config_hash,
+                    "params": params,
+                    "cache_hit": True,
+                }
 
-    job_id = str(uuid.uuid4())
-    # job row + queue entry commit atomically: no orphaned rows either way
-    async with await psycopg.AsyncConnection.connect(dsn) as conn:
+        active = await db.active_jobs(conn, org_id)
+        if len(active) >= ORG_JOB_QUOTA:
+            raise ToolError(
+                f"organization {org_id!r} is at its job quota "
+                f"({ORG_JOB_QUOTA} concurrent jobs); active jobs: "
+                f"{_active_jobs_summary(active)}. Wait for one to finish or "
+                "check its result with get_job_status/get_job_result before "
+                "retrying."
+            )
+
+        job_id = str(uuid.uuid4())
         await db.create_job(conn, job_id, job_type, params, org_id=org_id)
         await task.configure(connection=conn).defer_async(job_id=job_id, params=params)
         await conn.commit()
+
     return {
         "job_id": job_id,
         "status": "queued",
