@@ -1,0 +1,26 @@
+# Caddy fronts the stack with automatic Let's Encrypt TLS. Two public names:
+#   MCP_HOSTNAME  — the MCP endpoint (and OAuth resource metadata host)
+#   S3_HOSTNAME   — the MinIO S3 API that presigned artifact URLs point at
+# Both are injected from the environment by the caddy service (see
+# docker-compose.prod.yml). Hostnames, not ports, are what SigV4 and the OAuth
+# resource URL bind to, so these must match SERVER_BASE_URL and MINIO_PUBLIC_URL.
+
+{$MCP_HOSTNAME} {
+	encode zstd gzip
+	# Streamable HTTP keeps long-lived request/response streams; don't buffer
+	# them, and allow ample time for a slow tool call to stream back.
+	reverse_proxy server:8000 {
+		flush_interval -1
+		transport http {
+			response_header_timeout 5m
+		}
+	}
+}
+
+{$S3_HOSTNAME} {
+	# Large artifact bodies (parquet panels, figures) flow through here.
+	request_body {
+		max_size 512MB
+	}
+	reverse_proxy minio:9000
+}

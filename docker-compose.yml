@@ -25,8 +25,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dfl24}
       POSTGRES_DB: ${POSTGRES_DB:-dfl24sim}
     ports:
-      # host-side only; in-network clients always use postgres:5432
-      - "${POSTGRES_PORT:-5432}:5432"
+      # loopback-only: in-network clients use postgres:5432, and on a public
+      # VPS this must never be reachable from the internet
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -42,9 +43,10 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dfl24}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dfl24secret}
     ports:
-      # host-side only; in-network clients always use minio:9000
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      # loopback-only: in-network clients use minio:9000; the public artifact
+      # endpoint is served through Caddy in prod, never by exposing this port
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - miniodata:/data
     healthcheck:
@@ -68,7 +70,9 @@ services:
       context: .
       dockerfile: server/Dockerfile
     ports:
-      - "8000:8000"
+      # loopback-only: Caddy reaches the app over the compose network as
+      # server:8000 and terminates TLS; the host port is for local access only
+      - "127.0.0.1:8000:8000"
     environment:
       <<: [*db-env, *s3-env, *auth-env]
     depends_on:
