@@ -100,11 +100,27 @@ def artifact_store(s3_url, monkeypatch):
 
 @pytest.fixture()
 def job_db(pg_dsn, monkeypatch):
-    """Schema-applied database, wired into the server's runtime DSN."""
+    """Schema-applied, emptied database, wired into the server's runtime DSN.
+
+    The underlying Postgres is session-scoped (booting it per test would be
+    slow), so each test truncates the job tables itself. This also matters
+    now that jobs carry per-org quota/dedup state (see mcp.py): without a
+    clean slate, jobs left behind by an earlier test in the shared no-auth
+    "dev" org would count against this test's quota or dedup its results.
+    """
+    import psycopg
+
     from dfl24sim_server import db
 
     monkeypatch.setenv("DFL24_DATABASE_URL", pg_dsn)
     db.apply_schema(pg_dsn)
+    with psycopg.connect(pg_dsn) as conn:
+        conn.execute(
+            "TRUNCATE TABLE sim_jobs, procrastinate_jobs, procrastinate_events, "
+            "procrastinate_periodic_defers, procrastinate_workers "
+            "RESTART IDENTITY CASCADE"
+        )
+        conn.commit()
     yield pg_dsn
 
 

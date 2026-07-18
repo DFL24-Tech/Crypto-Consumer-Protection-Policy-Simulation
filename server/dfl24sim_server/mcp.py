@@ -24,6 +24,8 @@ MAX_CAL_ITERS = 100
 MAX_MORRIS_TRAJECTORIES = 32
 MAX_SOBOL_SAMPLES = 128
 GSA_DEFAULT_SAMPLES = {"morris": 12, "sobol": 64}
+# Governance: caps the compute one organization can hold at once.
+ORG_JOB_QUOTA = 2
 
 
 def _check_caps(n_agents: int, steps: int, seeds: int = 1) -> None:
@@ -177,7 +179,9 @@ def run_scenario(
 
 
 @mcp.tool
-async def run_study(n_agents: int = 15_000, steps: int = 14, seeds: int = 3) -> dict:
+async def run_study(
+    n_agents: int = 15_000, steps: int = 14, seeds: int = 3, force: bool = False
+) -> dict:
     """Trigger the full policy × attack study as a background job (fire-and-forget).
 
     Crosses every policy regime (laissez_faire, standard, over_friction,
@@ -187,26 +191,68 @@ async def run_study(n_agents: int = 15_000, steps: int = 14, seeds: int = 3) -> 
     returns a `job_id` immediately; check progress with get_job_status and
     fetch the numbers with get_job_result when done. Caps: n_agents <= 100000,
     steps <= 60, seeds <= 8.
+
+    Re-triggering with identical parameters returns the prior completed
+    result immediately (`cache_hit: true`) instead of re-running; pass
+    `force=true` to re-run anyway. Your organization may hold at most 2
+    queued or running jobs across all job types at once.
     """
     _check_caps(n_agents, steps, seeds)
     params = {"n_agents": n_agents, "steps": steps, "seeds": seeds}
-    return await _enqueue_job("study", jobs.run_study_job, params)
+    return await _enqueue_job("study", jobs.run_study_job, params, force=force)
 
 
-async def _enqueue_job(job_type: str, task, params: dict) -> dict:
-    job_id = str(uuid.uuid4())
+def _active_jobs_summary(active: list[dict]) -> str:
+    return ", ".join(f"{j['job_id']} ({j['job_type']}, {j['status']})" for j in active)
+
+
+async def _enqueue_job(
+    job_type: str, task, params: dict, force: bool = False
+) -> dict:
     org_id = caller_org()
-    # job row + queue entry commit atomically: no orphaned rows either way
+    config_hash = db.config_hash(params)
+
+    # One transaction holds the org's advisory lock across the whole decision:
+    # dedup lookup, quota check, and the insert are atomic against concurrent
+    # triggers for the same org, so two callers cannot both pass the quota gate
+    # and both create a job. The lock releases when this transaction ends.
     async with await psycopg.AsyncConnection.connect(db.get_dsn()) as conn:
+        await db.lock_org(conn, org_id)
+
+        if not force:
+            cached = await db.cached_job(conn, org_id, job_type, config_hash)
+            if cached is not None:
+                return {
+                    "job_id": cached["job_id"],
+                    "status": cached["status"],
+                    "job_type": job_type,
+                    "config_hash": config_hash,
+                    "params": params,
+                    "cache_hit": True,
+                }
+
+        active = await db.active_jobs(conn, org_id)
+        if len(active) >= ORG_JOB_QUOTA:
+            raise ToolError(
+                f"organization {org_id!r} is at its job quota "
+                f"({ORG_JOB_QUOTA} concurrent jobs); active jobs: "
+                f"{_active_jobs_summary(active)}. Wait for one to finish or "
+                "check its result with get_job_status/get_job_result before "
+                "retrying."
+            )
+
+        job_id = str(uuid.uuid4())
         await db.create_job(conn, job_id, job_type, params, org_id=org_id)
         await task.configure(connection=conn).defer_async(job_id=job_id, params=params)
         await conn.commit()
+
     return {
         "job_id": job_id,
         "status": "queued",
         "job_type": job_type,
-        "config_hash": db.config_hash(params),
+        "config_hash": config_hash,
         "params": params,
+        "cache_hit": False,
     }
 
 
@@ -217,6 +263,7 @@ async def run_calibration(
     iters: int = 40,
     n_seeds: int = 3,
     seed: int = 0,
+    force: bool = False,
 ) -> dict:
     """Trigger SMM calibration as a background job (fire-and-forget).
 
@@ -228,6 +275,11 @@ async def run_calibration(
     get_job_status and fetch the fitted parameters and fit diagnostics with
     get_job_result. Caps: n_agents <= 100000, steps <= 60, n_seeds <= 8,
     iters <= 100.
+
+    Re-triggering with identical parameters returns the prior completed
+    result immediately (`cache_hit: true`) instead of re-running; pass
+    `force=true` to re-run anyway. Your organization may hold at most 2
+    queued or running jobs across all job types at once.
     """
     _check_caps(n_agents, steps, n_seeds)
     if not 1 <= iters <= MAX_CAL_ITERS:
@@ -238,7 +290,9 @@ async def run_calibration(
         "n_agents": n_agents, "steps": steps, "iters": iters,
         "n_seeds": n_seeds, "seed": seed,
     }
-    return await _enqueue_job("calibration", jobs.run_calibration_job, params)
+    return await _enqueue_job(
+        "calibration", jobs.run_calibration_job, params, force=force
+    )
 
 
 @mcp.tool
@@ -248,6 +302,7 @@ async def run_gsa(
     steps: int = 12,
     samples: int | None = None,
     seed: int = 0,
+    force: bool = False,
 ) -> dict:
     """Trigger global sensitivity analysis as a background job (fire-and-forget).
 
@@ -260,6 +315,11 @@ async def run_gsa(
     returns a `job_id` immediately; check with get_job_status and fetch the
     per-parameter indices with get_job_result. Caps: n_agents <= 100000,
     steps <= 60.
+
+    Re-triggering with identical parameters returns the prior completed
+    result immediately (`cache_hit: true`) instead of re-running; pass
+    `force=true` to re-run anyway. Your organization may hold at most 2
+    queued or running jobs across all job types at once.
     """
     if method not in GSA_DEFAULT_SAMPLES:
         raise ToolError(
@@ -281,7 +341,7 @@ async def run_gsa(
         "method": method, "n_agents": n_agents, "steps": steps,
         "samples": samples, "seed": seed,
     }
-    return await _enqueue_job("gsa", jobs.run_gsa_job, params)
+    return await _enqueue_job("gsa", jobs.run_gsa_job, params, force=force)
 
 
 @mcp.tool
@@ -290,6 +350,7 @@ async def run_sweep(
     n_agents: int = 6000,
     steps: int = 14,
     seeds: int = 2,
+    force: bool = False,
 ) -> dict:
     """Trigger a one-at-a-time robustness sweep as a background job (fire-and-forget).
 
@@ -304,6 +365,11 @@ async def run_sweep(
     minutes on a worker: returns a `job_id` immediately; check with
     get_job_status and fetch the grid of outcomes with get_job_result. Caps:
     n_agents <= 100000, steps <= 60, seeds <= 8.
+
+    Re-triggering with identical parameters returns the prior completed
+    result immediately (`cache_hit: true`) instead of re-running; pass
+    `force=true` to re-run anyway. Your organization may hold at most 2
+    queued or running jobs across all job types at once.
     """
     if sweep not in sweeps.SWEEPS:
         raise ToolError(
@@ -311,7 +377,7 @@ async def run_sweep(
         )
     _check_caps(n_agents, steps, seeds)
     params = {"sweep": sweep, "n_agents": n_agents, "steps": steps, "seeds": seeds}
-    return await _enqueue_job("sweep", jobs.run_sweep_job, params)
+    return await _enqueue_job("sweep", jobs.run_sweep_job, params, force=force)
 
 
 @mcp.tool

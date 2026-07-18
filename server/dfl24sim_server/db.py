@@ -138,6 +138,62 @@ async def get_job(dsn: str, job_id: str, org_id: str | None = None) -> dict | No
     return _to_job(row) if row else None
 
 
+def _org_lock_key(org_id: str) -> int:
+    """Stable signed 64-bit key for an org's advisory lock (fits bigint)."""
+    return int.from_bytes(hashlib.sha1(org_id.encode()).digest()[:8], "big", signed=True)
+
+
+async def lock_org(conn, org_id: str) -> None:
+    """Serialize an org's enqueue decisions within the current transaction.
+
+    A transaction-scoped advisory lock, held until this connection's
+    transaction commits or rolls back, so an org's quota check and the insert
+    that follows it are atomic against concurrent triggers for the same org.
+    """
+    await conn.execute("SELECT pg_advisory_xact_lock(%s)", (_org_lock_key(org_id),))
+
+
+async def active_jobs(conn, org_id: str) -> list[dict]:
+    """An org's queued or running jobs on an open connection — quota input."""
+    conn.row_factory = dict_row
+    cur = await conn.execute(
+        f"SELECT {_JOB_COLUMNS} FROM sim_jobs "
+        "WHERE org_id = %s AND status IN ('queued', 'running') "
+        "ORDER BY created_at",
+        (org_id,),
+    )
+    return [_to_job(row) for row in await cur.fetchall()]
+
+
+async def cached_job(
+    conn, org_id: str, job_type: str, config_hash: str
+) -> dict | None:
+    """The most recent completed job with identical org, type, and params."""
+    conn.row_factory = dict_row
+    cur = await conn.execute(
+        f"SELECT {_JOB_COLUMNS} FROM sim_jobs "
+        "WHERE org_id = %s AND job_type = %s AND config_hash = %s "
+        "AND status = 'done' ORDER BY created_at DESC LIMIT 1",
+        (org_id, job_type, config_hash),
+    )
+    row = await cur.fetchone()
+    return _to_job(row) if row else None
+
+
+async def list_active_jobs(dsn: str, org_id: str) -> list[dict]:
+    """An org's queued or running jobs — what counts against its quota."""
+    async with await psycopg.AsyncConnection.connect(dsn) as conn:
+        return await active_jobs(conn, org_id)
+
+
+async def find_cached_job(
+    dsn: str, org_id: str, job_type: str, config_hash: str
+) -> dict | None:
+    """The most recent completed job with identical org, type, and params."""
+    async with await psycopg.AsyncConnection.connect(dsn) as conn:
+        return await cached_job(conn, org_id, job_type, config_hash)
+
+
 async def list_recent(
     dsn: str, limit: int = 20, org_id: str | None = None
 ) -> list[dict]:
