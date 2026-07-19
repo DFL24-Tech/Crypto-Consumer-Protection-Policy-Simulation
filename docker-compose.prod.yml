@@ -1,0 +1,93 @@
+# Production overlay for a single dedicated-CPU VPS. Layers on docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     --env-file .env.prod up -d --build
+#
+# Adds Caddy (TLS + stable public hostnames), restart policies, worker CPU
+# limits that keep the API responsive during heavy jobs, and an on-demand
+# backup profile. See docs/DEPLOY.md for the runbook. The base file already
+# binds every host port to 127.0.0.1, so only Caddy is exposed publicly.
+
+services:
+  postgres:
+    restart: unless-stopped
+
+  minio:
+    restart: unless-stopped
+
+  server:
+    restart: unless-stopped
+
+  worker:
+    restart: unless-stopped
+    # Pin the worker below the box's core count so a running study cannot
+    # starve Postgres and the API. On an N-core VPS set WORKER_CPUS to about
+    # N-1 (default assumes a 4-core box).
+    deploy:
+      resources:
+        limits:
+          cpus: "${WORKER_CPUS:-3}"
+          memory: "${WORKER_MEMORY:-6g}"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      # Caddy proxies both hosts, so wait on both backends to avoid 502s on a
+      # cold start (the S3 host proxies minio).
+      server:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      # DNS for both names must point at this VPS before first start, so Caddy
+      # can complete the ACME challenge and provision certificates.
+      MCP_HOSTNAME: ${MCP_HOSTNAME:?set MCP_HOSTNAME in .env.prod}
+      S3_HOSTNAME: ${S3_HOSTNAME:?set S3_HOSTNAME in .env.prod}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data      # provisioned certificates — must persist
+      - caddyconfig:/config
+
+  # --- backup profile: not started by `up`; invoked by deploy/backup.sh -------
+  pg-backup:
+    profiles: [backup]
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-dfl24}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-dfl24}
+      PGDATABASE: ${POSTGRES_DB:-dfl24sim}
+    # streams a compressed dump to stdout; backup.sh redirects it to a file.
+    # pipefail so a mid-dump pg_dump failure fails the container instead of
+    # being masked by gzip's exit 0 on the partial stream (busybox ash).
+    entrypoint: ["sh", "-c"]
+    command: ["set -o pipefail; pg_dump --no-owner | gzip -c"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  minio-backup:
+    profiles: [backup]
+    image: minio/mc
+    environment:
+      MC_HOST_store: http://${MINIO_ROOT_USER:-dfl24}:${MINIO_ROOT_PASSWORD:-dfl24secret}@minio:9000
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
+    # `mb --ignore-existing` so the very first backup (before any artifact has
+    # created the bucket) still succeeds. No `--remove`: a backup must never
+    # delete, so a wiped bucket cannot propagate into the mirror.
+    entrypoint: ["sh", "-c"]
+    command:
+      - "mc mb --ignore-existing store/${MINIO_BUCKET:-dfl24-artifacts} && mc mirror --overwrite store/${MINIO_BUCKET:-dfl24-artifacts} /backups/minio/${MINIO_BUCKET:-dfl24-artifacts}"
+    depends_on:
+      minio:
+        condition: service_healthy
+
+volumes:
+  caddydata:
+  caddyconfig:
