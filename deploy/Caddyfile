@@ -18,9 +18,8 @@
 }
 
 {$S3_HOSTNAME} {
-	# Large artifact bodies (parquet panels, figures) flow through here.
-	request_body {
-		max_size 512MB
-	}
+	# Serves presigned artifact downloads (GET). Uploads never traverse Caddy —
+	# the worker writes straight to minio:9000 over the internal network — so no
+	# request-body limit is needed here; the responses are what get large.
 	reverse_proxy minio:9000
 }

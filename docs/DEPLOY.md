@@ -21,8 +21,14 @@ Everything below runs from the repository root on the VPS. The production
 overlay is `docker-compose.prod.yml`; secrets and hostnames come from
 `.env.prod` (never committed — see `.env.prod.example`).
 
+Set up your shell once per session. `--env-file` passes variables to Compose
+and the containers, **not** to your shell, so also source the file — several
+commands below expand `$POSTGRES_USER`, `$MINIO_BUCKET`, `$MCP_HOSTNAME`, etc.
+in the host shell:
+
 ```sh
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod"
+set -a; . ./.env.prod; set +a          # export the vars into this shell too
 ```
 
 ## One-time setup (human)
@@ -132,9 +138,9 @@ $COMPOSE up -d postgres
 gzip -dc backups/pg-<timestamp>.sql.gz | \
   $COMPOSE exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 
-# MinIO: push the mirror back into the bucket with mc
+# MinIO: create the bucket if the store is fresh, then push the mirror back
 $COMPOSE --profile backup run --rm --entrypoint sh minio-backup -c \
-  'mc mirror --overwrite /backups/minio/'"$MINIO_BUCKET"' store/'"$MINIO_BUCKET"
+  'mc mb --ignore-existing store/'"$MINIO_BUCKET"' && mc mirror --overwrite /backups/minio/'"$MINIO_BUCKET"' store/'"$MINIO_BUCKET"
 ```
 
 ## Data persistence

@@ -33,7 +33,11 @@ services:
     image: caddy:2
     restart: unless-stopped
     depends_on:
+      # Caddy proxies both hosts, so wait on both backends to avoid 502s on a
+      # cold start (the S3 host proxies minio).
       server:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     ports:
       - "80:80"
@@ -58,9 +62,11 @@ services:
       PGUSER: ${POSTGRES_USER:-dfl24}
       PGPASSWORD: ${POSTGRES_PASSWORD:-dfl24}
       PGDATABASE: ${POSTGRES_DB:-dfl24sim}
-    # streams a compressed dump to stdout; backup.sh redirects it to a file
+    # streams a compressed dump to stdout; backup.sh redirects it to a file.
+    # pipefail so a mid-dump pg_dump failure fails the container instead of
+    # being masked by gzip's exit 0 on the partial stream (busybox ash).
     entrypoint: ["sh", "-c"]
-    command: ["pg_dump --no-owner | gzip -c"]
+    command: ["set -o pipefail; pg_dump --no-owner | gzip -c"]
     depends_on:
       postgres:
         condition: service_healthy

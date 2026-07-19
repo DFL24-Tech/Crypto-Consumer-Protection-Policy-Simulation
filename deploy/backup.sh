@@ -8,7 +8,7 @@
 #   pg-<UTC timestamp>.sql.gz   — a compressed logical dump, one file per run
 #   minio/<bucket>/...          — a mirror of the artifact bucket
 # Postgres dumps older than $BACKUP_KEEP_DAYS (default 14) are pruned. The
-# MinIO mirror uses --remove, so it always reflects the live bucket.
+# MinIO mirror never deletes, so it only ever accumulates artifacts.
 set -eu
 
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -28,10 +28,17 @@ dump="$BACKUP_DIR/pg-$timestamp.sql.gz"
 
 echo "[backup] $timestamp postgres -> $dump"
 # -T: no TTY, so the gzip stream reaches the redirect unmangled
-compose --profile backup run --rm -T pg-backup > "$dump"
-# a dump that is empty or missing its gzip magic means pg_dump failed midway
-if [ ! -s "$dump" ] || ! gzip -t "$dump" 2>/dev/null; then
-	echo "[backup] ERROR: postgres dump is empty or corrupt; removing $dump" >&2
+if ! compose --profile backup run --rm -T pg-backup > "$dump"; then
+	echo "[backup] ERROR: pg-backup failed; removing $dump" >&2
+	rm -f "$dump"
+	exit 1
+fi
+# Validate before trusting it: non-empty, valid gzip, and — the case a bare
+# gzip check misses — ending in pg_dump's completion footer, so a dump
+# truncated mid-stream (which can still be valid gzip) is rejected.
+if [ ! -s "$dump" ] || ! gzip -t "$dump" 2>/dev/null || \
+	! gzip -dc "$dump" | tail -c 512 | grep -q 'PostgreSQL database dump complete'; then
+	echo "[backup] ERROR: postgres dump is empty, corrupt, or incomplete; removing $dump" >&2
 	rm -f "$dump"
 	exit 1
 fi
