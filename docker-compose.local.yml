@@ -1,9 +1,3 @@
-# Minimal persistent stack for a shared "dev env" VPS — same services as
-# docker-compose.local.yml (laptop dev), plus restart policies since this
-# variant is meant to stay up between sessions. No TLS/Caddy here: front it
-# with the standalone deploy/nginx-dev.conf on the VPS's system nginx (see
-# docs/DEV-ENV.md). For real production with Caddy/TLS, layer
-# docker-compose.prod.yml on top of this file instead, per docs/DEPLOY.md.
 # Dev defaults live in the ${VAR:-default} fallbacks; override via a .env file
 # (see .env.example) — never by editing this file.
 x-db-env: &db-env
@@ -31,7 +25,6 @@ x-web-env: &web-env
 services:
   postgres:
     image: postgres:16-alpine
-    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-dfl24}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dfl24}
@@ -50,7 +43,6 @@ services:
 
   minio:
     image: minio/minio
-    restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dfl24}
@@ -82,11 +74,9 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
-    restart: unless-stopped
     ports:
-      # loopback-only: a same-host reverse proxy (nginx here, Caddy in real
-      # prod) reaches this over the compose network as server:8000; the host
-      # port is for same-host access only
+      # loopback-only: Caddy reaches the app over the compose network as
+      # server:8000 and terminates TLS; the host port is for local access only
       - "127.0.0.1:8000:8000"
     environment:
       <<: [*db-env, *s3-env, *auth-env]
@@ -109,7 +99,6 @@ services:
         # must be a build arg. Changing WEB_REDIRECT_URI requires rebuilding
         # this image (`docker compose up -d --build web`), not just restarting it.
         NEXT_PUBLIC_WORKOS_REDIRECT_URI: ${WEB_REDIRECT_URI:-http://localhost:3000/callback}
-    restart: unless-stopped
     ports:
       # loopback-only, same convention as server/postgres/minio
       - "127.0.0.1:3000:3000"
@@ -125,7 +114,6 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
-    restart: unless-stopped
     command: ["python", "-m", "dfl24sim_server.worker"]
     environment:
       <<: [*db-env, *s3-env]

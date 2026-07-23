@@ -29,25 +29,31 @@ services:
           cpus: "${WORKER_CPUS:-3}"
           memory: "${WORKER_MEMORY:-6g}"
 
+  web:
+    restart: unless-stopped
+
   caddy:
     image: caddy:2
     restart: unless-stopped
     depends_on:
-      # Caddy proxies both hosts, so wait on both backends to avoid 502s on a
-      # cold start (the S3 host proxies minio).
+      # Caddy proxies all three hosts, so wait on all three backends to avoid
+      # 502s on a cold start (the S3 host proxies minio).
       server:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      web:
         condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp"  # HTTP/3
     environment:
-      # DNS for both names must point at this VPS before first start, so Caddy
-      # can complete the ACME challenge and provision certificates.
+      # DNS for all three names must point at this VPS before first start, so
+      # Caddy can complete the ACME challenge and provision certificates.
       MCP_HOSTNAME: ${MCP_HOSTNAME:?set MCP_HOSTNAME in .env.prod}
       S3_HOSTNAME: ${S3_HOSTNAME:?set S3_HOSTNAME in .env.prod}
+      WEB_HOSTNAME: ${WEB_HOSTNAME:?set WEB_HOSTNAME in .env.prod}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddydata:/data      # provisioned certificates — must persist

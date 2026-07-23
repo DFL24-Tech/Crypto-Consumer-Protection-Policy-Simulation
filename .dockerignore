@@ -9,3 +9,6 @@ docs/
 tests/
 server/tests/
 DFL24-Sim_WhitePaper.pdf
+web/node_modules/
+web/.next/
+web/.env*.local

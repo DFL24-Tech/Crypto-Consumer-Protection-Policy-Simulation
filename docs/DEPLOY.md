@@ -1,20 +1,21 @@
 # Production deployment & runbook
 
-The full stack — MCP/REST API, worker, Postgres, MinIO — on a single
-dedicated-CPU VPS, fronted by [Caddy](https://caddyserver.com) for automatic
-TLS and stable public hostnames.
+The full stack — MCP/REST API, worker, Postgres, MinIO, and the AuthKit web
+login app — on a single dedicated-CPU VPS, fronted by
+[Caddy](https://caddyserver.com) for automatic TLS and stable public
+hostnames.
 
 ```
-            https://mcp.example.com          https://artifacts.example.com
-                      │                                   │
-                 ┌────▼─────────────────── Caddy ─────────▼────┐
-                 │            (TLS, reverse proxy)             │
-                 └────┬───────────────────────────────┬───────┘
-                      │ server:8000                    │ minio:9000
-                 ┌────▼────┐   ┌────────┐   ┌──────────▼──┐   ┌───────────┐
-                 │ server  │   │ worker │   │    minio    │   │ postgres  │
-                 └────┬────┘   └───┬────┘   └─────────────┘   └───────────┘
-                      └── jobs ────┴──────────► (queue + store)
+     https://mcp.example.com   https://artifacts.example.com   https://web.example.com
+              │                          │                              │
+         ┌────▼──────────────────────── Caddy ──────────────────────────▼────┐
+         │                       (TLS, reverse proxy)                        │
+         └────┬───────────────────────────────┬─────────────────────┬───────┘
+              │ server:8000                    │ minio:9000          │ web:3000
+         ┌────▼────┐   ┌────────┐   ┌──────────▼──┐   ┌───────────┐  ┌──▼──┐
+         │ server  │   │ worker │   │    minio    │   │ postgres  │  │ web │
+         └────┬────┘   └───┬────┘   └─────────────┘   └───────────┘  └─────┘
+              └── jobs ────┴──────────► (queue + store)
 ```
 
 Everything below runs from the repository root on the VPS. The production
@@ -37,20 +38,25 @@ These steps need a person: they involve buying the box, DNS, and secrets.
 
 1. **VPS** — a dedicated-CPU instance (≥4 cores, ≥8 GB RAM), Docker Engine +
    Compose v2 installed. Open inbound 80 and 443 only.
-2. **DNS** — point both hostnames at the VPS (A/AAAA):
+2. **DNS** — point all three hostnames at the VPS (A/AAAA):
    - `MCP_HOSTNAME` → the MCP endpoint (e.g. `mcp.example.com`)
    - `S3_HOSTNAME` → the artifact endpoint (e.g. `artifacts.example.com`)
+   - `WEB_HOSTNAME` → the AuthKit login app (e.g. `web.example.com`)
    Caddy provisions certificates on first start via the ACME HTTP challenge,
    so DNS must resolve *before* `up`.
 3. **WorkOS** — create a production AuthKit environment, enable Dynamic Client
    Registration, and add `https://<MCP_HOSTNAME>/oauth2/callback` as a
-   redirect (see `server/dfl24sim_server/auth.py`).
+   redirect (see `server/dfl24sim_server/auth.py`). Also add
+   `https://<WEB_HOSTNAME>/callback` as a redirect for the `web/` app's hosted
+   login (see `web/README.md`) — same WorkOS project, different SDK/flow.
 4. **Secrets** — `cp .env.prod.example .env.prod`, then fill in real values:
-   long random `POSTGRES_PASSWORD` / `MINIO_ROOT_PASSWORD`, the two hostnames,
-   `SERVER_BASE_URL=https://<MCP_HOSTNAME>`,
-   `MINIO_PUBLIC_URL=https://<S3_HOSTNAME>`, and `AUTHKIT_DOMAIN`. Set
-   `WORKER_CPUS` to about (cores − 1) so a running study leaves the API and
-   Postgres a core. `chmod 600 .env.prod`.
+   long random `POSTGRES_PASSWORD` / `MINIO_ROOT_PASSWORD`, all three
+   hostnames, `SERVER_BASE_URL=https://<MCP_HOSTNAME>`,
+   `MINIO_PUBLIC_URL=https://<S3_HOSTNAME>`, `AUTHKIT_DOMAIN`, and the web
+   app's `WORKOS_CLIENT_ID` / `WORKOS_API_KEY` / `WORKOS_COOKIE_PASSWORD` /
+   `WEB_REDIRECT_URI=https://<WEB_HOSTNAME>/callback`. Set `WORKER_CPUS` to
+   about (cores − 1) so a running study leaves the API and Postgres a core.
+   `chmod 600 .env.prod`.
 
 ## Deploy a new version
 
