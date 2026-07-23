@@ -35,6 +35,21 @@ make a subsequent field experiment cheaper and pre-registered, not to replace it
 
 ---
 
+## Use it from a chat client
+
+The simulator is also an [MCP](https://modelcontextprotocol.io) server, so a policy analyst
+can ask a question in plain language and have the model run it — cite a paper number, run a
+scenario in seconds, or trigger the full study as a background job.
+
+- **[Connect via Claude](docs/CONNECT-CLAUDE.md)** — the primary path: add the custom
+  connector, sign in, and follow a worked example (coverage gap → scenario → study → figure).
+- **[Connect via ChatGPT (Developer Mode)](docs/CONNECT-CHATGPT.md)** — the secondary path,
+  with an honest note on its limitations.
+- **[Deploy it yourself](docs/DEPLOY.md)** — production VPS runbook (compose, Caddy TLS,
+  backups) for operators standing up the server.
+
+---
+
 ## Architecture
 
 ```mermaid
