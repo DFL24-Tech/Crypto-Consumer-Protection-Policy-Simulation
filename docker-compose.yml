@@ -111,8 +111,10 @@ services:
         NEXT_PUBLIC_WORKOS_REDIRECT_URI: ${WEB_REDIRECT_URI:-http://localhost:3000/callback}
     restart: unless-stopped
     ports:
-      # loopback-only, same convention as server/postgres/minio
-      - "127.0.0.1:3000:3000"
+      # loopback-only, same convention as server/postgres/minio; host side is
+      # 3050 (not the usual 3000) because port 3000 is already occupied by
+      # another process on this VPS — see deploy/nginx-dev.conf
+      - "127.0.0.1:3050:3000"
     environment:
       <<: *web-env
     healthcheck:

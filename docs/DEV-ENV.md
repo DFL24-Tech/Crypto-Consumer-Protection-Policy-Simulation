@@ -13,15 +13,14 @@ production traffic (see `docs/DEPLOY.md` for that).
    you would for local dev (see `.env.example`'s comments). No new secrets
    are needed beyond what `docker-compose.local.yml` already uses, but do
    set `WEB_REDIRECT_URI=http://<web-hostname-you-chose>/callback` (e.g.
-   `http://web-dev.example.com/callback`) — it's baked into the `web` image
+   `http://sim-auth.dfl24.com/callback`) — it's baked into the `web` image
    at build time, so the default `http://localhost:3000/callback` only
    works if you're testing from the VPS itself. Add that same URL as an
    allowed redirect in the WorkOS dashboard (see `web/README.md`).
 3. **Nginx** — copy `deploy/nginx-dev.conf` to the VPS (e.g.
-   `/etc/nginx/sites-available/dfl24sim-dev`), replace the three
-   `server_name` placeholders with real hostnames, symlink it into
+   `/etc/nginx/sites-available/dfl24sim-dev`), symlink it into
    `sites-enabled`, then `nginx -s reload`. Point DNS at the VPS for each
-   hostname you chose.
+   hostname (`sim-api.dfl24.com`, `sim-auth.dfl24.com`, `sim-s3.dfl24.com`).
 
 ## Deploy
 
@@ -30,7 +29,7 @@ git pull
 docker compose up -d --build   # no -f needed — docker-compose.yml is the default
 docker compose ps              # all services Up; server/web/minio healthy
 curl -fsS http://127.0.0.1:8000/health   # -> {"status":"ok"}
-curl -fsS http://127.0.0.1:3000/health   # -> {"status":"ok"}
+curl -fsS http://127.0.0.1:3050/health   # -> {"status":"ok"} (3050, not 3000 -- see docker-compose.yml)
 ```
 
 Every service has `restart: unless-stopped`, so the stack survives a VPS
