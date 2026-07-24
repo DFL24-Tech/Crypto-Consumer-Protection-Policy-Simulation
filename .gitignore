@@ -7,3 +7,4 @@ __pycache__/
 .env.prod
 backups/
 DFL24-Sim_WhitePaper.pdf
+docs/superpowers/

@@ -5,8 +5,9 @@ ChatGPT can use it too — through **Developer Mode**, which lets you add an MCP
 server as a custom connector. This is the **secondary** path; the
 [Claude connector](CONNECT-CLAUDE.md) is the primary, better-supported one.
 
-> Use the real hostname from your operator in place of `mcp.example.com`. The
-> connector URL is that hostname with `/mcp`: **`https://mcp.example.com/mcp`**
+> Use the real hostname from your operator in place of `mcp.example.com` — for
+> this deployment that's `sim-api.dfl24.com`. The connector URL is that
+> hostname with `/mcp`: **`https://sim-api.dfl24.com/mcp`**
 
 ## Read this first — what to expect
 
@@ -37,7 +38,7 @@ server as a custom connector. This is the **secondary** path; the
 
 1. Under **Connectors**, choose **Create** / **Add custom connector** (the
    Developer-Mode entry point).
-2. Name it `DFL24-Sim` and paste the MCP URL: `https://mcp.example.com/mcp`.
+2. Name it `DFL24-Sim` and paste the MCP URL: `https://sim-api.dfl24.com/mcp`.
 3. Save. When prompted, **Connect** and complete the AuthKit login with your
    organization account.
 4. In a new chat, enable the DFL24-Sim connector for that conversation (the

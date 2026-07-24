@@ -5,8 +5,9 @@ policy question in plain language and Claude runs the simulator for you. No
 coding — if you can use claude.ai, you can follow this.
 
 > Wherever this guide says `mcp.example.com`, use the real hostname your
-> operator gave you. The connector URL is that hostname with `/mcp` on the end:
-> **`https://mcp.example.com/mcp`**
+> operator gave you — for this deployment that's `sim-api.dfl24.com`. The
+> connector URL is that hostname with `/mcp` on the end:
+> **`https://sim-api.dfl24.com/mcp`**
 
 ## Before you start
 
@@ -23,7 +24,7 @@ coding — if you can use claude.ai, you can follow this.
    the sidebar of a new chat).
 2. Click **Add custom connector**.
 3. Give it a name (e.g. `DFL24-Sim`) and paste the URL:
-   `https://mcp.example.com/mcp`
+   `https://sim-api.dfl24.com/mcp`
 4. Click **Add**, then **Connect**. Claude opens a login window (WorkOS
    AuthKit). Sign in with your organization account and approve access.
 5. The connector shows as **Connected**. Open a new chat and confirm the
